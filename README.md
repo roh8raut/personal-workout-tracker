@@ -1,15 +1,15 @@
 # personal-workout-tracker
 
-A personal push-up tracker, built as a PWA for iPhone. No account, no backend, no cost.
+A personal workout tracker for push-ups and planks, built as a PWA for iPhone. No account, no backend, no cost.
 
 > Status: design phase. The app is not built yet.
 
 ## What it does (v1)
 
-- Log sets of push-ups per day. Home shows today's total against yesterday's number to beat.
-- Weekly streak: a week counts when you hit your goal (default 5 active days, adjustable). No rest passes.
-- Month view: Monday-first calendar, each day shaded against your best day, flames on goal weeks. Tap a day to edit, delete or backfill.
-- Beta: data stays in the browser's `localStorage` only. Export and import a JSON backup from Settings, since clearing Safari data or losing the install would erase it.
+- Log sets of push-ups (reps) and planks (time) with a scroll wheel. Home is a stack of cards, one per exercise: swipe the top card away to reach the next. Each card shows today's total against yesterday's number to beat. More exercises can be added in the `EXERCISES` list in `src/proto.js`.
+- One weekly streak across all exercises: a day is active if you logged any set, and a week counts when you hit your goal (default 5 active days, adjustable). No rest passes.
+- Month view: one merged Monday-first calendar. Each day is shaded by how many sets you did that day, across exercises, with flames on goal weeks. Tap a day to see its sets, edit, delete or backfill.
+- Beta: data stays in the browser's IndexedDB only. Export and import a JSON backup from Settings, since clearing Safari data or losing the install would erase it.
 
 Deferred: meals, calories, AI, voice notes, walk/run tracking.
 
@@ -26,7 +26,7 @@ cd src
 python3 -m http.server 8080
 ```
 
-Open http://localhost:8080/. Data is in memory only and resets on reload.
+Open http://localhost:8080/. Data is saved in the browser's IndexedDB (database `pushup-tracker`), so it survives reloads.
 
 Check the streak logic:
 

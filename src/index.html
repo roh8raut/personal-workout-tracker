@@ -4,10 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#fbf8ec">
-<title>Push-ups</title>
-<meta name="description" content="A personal push-up tracker: log sets, beat yesterday, keep a weekly streak.">
+<title>Workout tracker</title>
+<meta name="description" content="A personal workout tracker: log sets of push-ups and planks, beat yesterday, keep a weekly streak.">
 <link href="https://api.fontshare.com/v2/css?f[]=chillax@500,600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="app.css?v=3">
+<link rel="stylesheet" href="app.css?v=9">
 </head>
 <body>
 <svg width="0" height="0" aria-hidden="true" focusable="false">
@@ -24,45 +24,16 @@
 
   <main id="main">
 
-    <section class="view" id="view-home" aria-labelledby="home-title">
+    <section class="view view--home" id="view-home" aria-labelledby="home-title">
       <header class="head">
-        <h1 id="home-title">Sunday 15 February</h1>
-        <p class="streak" id="streak-home"></p>
+        <h1 id="home-title"></h1>
+        <nav class="dots" id="dots" aria-label="Exercises"></nav>
       </header>
-
-      <div class="pear">
-      <div class="beat opens">
-        <div class="beat__today">
-          <p class="label">Today</p>
-          <p class="figure num" id="today-total">0</p>
-          <p class="label num" id="today-best"></p>
-        </div>
-        <div class="beat__yday">
-          <p class="label">Yesterday</p>
-          <p class="figure figure--s num" id="yday-total"></p>
-          <p class="label num" id="yday-best"></p>
-        </div>
-      </div>
-      <p class="standfirst" id="gap"></p>
-      <div class="track" aria-hidden="true"><span id="bar"></span></div>
-      </div>
-
       <p class="notice" id="first-run" hidden>Install to Home Screen first, then log. Sets saved in the browser tab may not appear in the installed app.</p>
-
-      <form class="entry" id="entry-home" data-date="">
-        <label for="reps-home">Reps in this set</label>
-        <div class="entry__row">
-          <input class="field num" id="reps-home" name="reps" type="text" inputmode="numeric" autocomplete="off" aria-describedby="err-home">
-          <button class="btn btn--primary" type="submit">Add set</button>
-        </div>
-        <p class="error" id="err-home" role="alert"></p>
-      </form>
-
-      <section class="block opens" aria-labelledby="sets-title">
-        <h2 id="sets-title">Today&rsquo;s sets</h2>
-        <ul class="sets" id="sets-home"></ul>
-      </section>
+      <!-- one card per exercise, built from EXERCISES in proto.js -->
+      <div class="deck" id="deck" role="region" aria-label="Exercise cards. Swipe the top card away, or use the left and right arrow keys." tabindex="0"></div>
     </section>
+
 
     <section class="view" id="view-month" aria-labelledby="month-title" hidden>
       <header class="head head--month">
@@ -144,21 +115,20 @@
   <p class="note" id="day-note"></p>
   <ul class="sets" id="sets-day"></ul>
   <form class="entry" id="entry-day" data-date="">
-    <label for="reps-day">Reps in this set</label>
+    <div class="seg" id="day-ex" role="group" aria-label="Exercise to add"></div>
+    <span class="entry__label" id="lbl-day"></span>
     <div class="entry__row">
-      <input class="field num" id="reps-day" name="reps" type="text" inputmode="numeric" autocomplete="off" aria-describedby="err-day">
+      <div class="wheelbox"><div class="wheel num" id="reps-day" role="spinbutton" tabindex="0" aria-labelledby="lbl-day"></div></div>
       <button class="btn btn--primary" type="submit">Add set</button>
     </div>
-    <p class="error" id="err-day" role="alert"></p>
   </form>
 </dialog>
 
 <dialog class="sheet sheet--small" id="edit-sheet" aria-labelledby="edit-title">
   <h2 id="edit-title">Edit set</h2>
   <form class="entry" id="edit-form">
-    <label for="reps-edit">Reps in this set</label>
-    <input class="field num" id="reps-edit" name="reps" type="text" inputmode="numeric" autocomplete="off" aria-describedby="err-edit">
-    <p class="error" id="err-edit" role="alert"></p>
+    <span class="entry__label" id="lbl-edit"></span>
+    <div class="wheelbox"><div class="wheel num" id="reps-edit" role="spinbutton" tabindex="0" aria-labelledby="lbl-edit"></div></div>
     <div class="actions">
       <button class="btn btn--primary" type="submit">Save</button>
       <button class="btn btn--danger" type="button" id="edit-delete">Delete</button>
@@ -176,7 +146,20 @@
   </div>
 </dialog>
 
-<script src="streak.js"></script>
-<script src="proto.js"></script>
+<!-- shown when today's total passes yesterday's: a popover, so it sits above any open sheet -->
+<div class="cheer" id="cheer" popover="manual" aria-hidden="true">
+  <canvas class="cheer__canvas" id="confetti"></canvas>
+  <div class="cheer__msg">
+    <div class="cheer__card">
+      <svg class="cheer__flame" width="44" height="44" aria-hidden="true"><use href="#flame"/></svg>
+      <p class="cheer__big">Congratulations, champ!</p>
+      <p class="cheer__sub" id="cheer-sub"></p>
+    </div>
+  </div>
+</div>
+<p class="visually-hidden" id="cheer-live" role="status"></p>
+
+<script src="streak.js?v=9"></script>
+<script src="proto.js?v=9"></script>
 </body>
 </html>

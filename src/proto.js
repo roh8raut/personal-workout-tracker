@@ -1,56 +1,279 @@
-// Prototype wiring. In-memory only, reloading resets it.
-// URL states: ?state=empty | first | backup | update (comma separated).
+// Prototype wiring. Data is saved in IndexedDB and survives reloads.
+// URL states: ?state=first | backup | update (comma separated).
 (function () {
   const S = window.Streak;
   const t0 = new Date(), p2 = (n) => String(n).padStart(2, "0");
   const TODAY = t0.getFullYear() + "-" + p2(t0.getMonth() + 1) + "-" + p2(t0.getDate());
   const modes = (new URLSearchParams(location.search).get("state") || "").split(",");
   const $ = (id) => document.getElementById(id);
+  const plural = (n, w) => n + " " + w + (n === 1 ? "" : "s");
   let nextId = 1;
-  const mk = (date, reps) => ({ id: "s" + nextId++, exerciseId: "pushup", reps, date });
+  const mk = (date, reps, ex) => ({ id: "s" + nextId++, exerciseId: ex, reps, date });
 
-  const state = { goal: 5, sets: [], lastExport: null, backup: null, y: +TODAY.slice(0, 4), m: +TODAY.slice(5, 7) };
-  if (modes.includes("backup")) state.backup = { goal: 5, sets: [], lastExport: null };
+  // Exercises. Add an entry here and it gets a card on Home and a button on Month.
+  // A set's `reps` field holds the wheel value: reps for counted exercises, seconds for timed ones.
+  // step/max/start size the number wheel; show formats a value, say reads it aloud.
+  const EXERCISES = [
+    { id: "pushup", name: "Push-ups", entry: "Reps in this set", step: 1, max: 300, start: 20,
+      show: (n) => String(n), say: (n) => plural(n, "rep") },
+    { id: "plank", name: "Planks", entry: "Time in this set", step: 5, max: 600, start: 30,
+      show: (s) => Math.floor(s / 60) + ":" + p2(s % 60),
+      say: (s) => ((s >= 60 ? Math.floor(s / 60) + " min " : "") + (s % 60 ? (s % 60) + " sec" : "")).trim() },
+  ];
+  const exById = Object.fromEntries(EXERCISES.map((e) => [e.id, e]));
+
+  const state = { goal: 5, sets: [], lastExport: null, backup: null, y: +TODAY.slice(0, 4), m: +TODAY.slice(5, 7), ex: EXERCISES[0].id };
+
+  // persistence: one snapshot record in IndexedDB (db "pushup-tracker", store "kv", key "state")
+  const LEGACY_KEY = "pushup-tracker:v1"; // old localStorage copy, migrated once
+  const db = new Promise((res, rej) => {
+    const r = indexedDB.open("pushup-tracker", 1);
+    r.onupgradeneeded = () => r.result.createObjectStore("kv");
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+  const idb = (mode, fn) => db.then((d) => new Promise((res, rej) => {
+    const t = d.transaction("kv", mode), q = fn(t.objectStore("kv"));
+    t.oncomplete = () => res(q.result);
+    t.onerror = t.onabort = () => rej(t.error);
+  }));
+  const snapshot = () => ({ goal: state.goal, sets: state.sets, lastExport: state.lastExport, backup: state.backup });
+  function save() { return idb("readwrite", (s) => s.put(snapshot(), "state")).then(() => true, () => false); } // false: blocked or full, keep running in memory
+  function load() {
+    return idb("readonly", (s) => s.get("state")).catch(() => null).then((saved) => {
+      if (!saved) { try { saved = JSON.parse(localStorage.getItem(LEGACY_KEY)); } catch (x) { saved = null; } }
+      if (saved && Array.isArray(saved.sets)) {
+        Object.assign(state, { goal: saved.goal, sets: saved.sets, lastExport: saved.lastExport, backup: saved.backup });
+        nextId = 1 + Math.max(0, ...state.sets.map((s) => parseInt(String(s.id).slice(1), 10) || 0));
+      }
+      if (modes.includes("backup")) state.backup = { goal: 5, sets: [], lastExport: null };
+    });
+  }
 
   const fmt = (date, opts) => new Date(S.toN(date) * 86400000).toLocaleDateString("en-GB", Object.assign({ timeZone: "UTC" }, opts));
   const longDate = (d) => fmt(d, { weekday: "long", day: "numeric", month: "long" });
   const shortDate = (d) => fmt(d, { weekday: "short", day: "numeric", month: "short" });
   const yesterday = S.toS(S.toN(TODAY) - 1);
-  const plural = (n, w) => n + " " + w + (n === 1 ? "" : "s");
 
   function streakHtml(n) {
     return `<svg width="20" height="20" aria-hidden="true"><use href="#flame"/></svg><span class="num">${plural(n, "week")}</span>`;
   }
 
-  function setsList(ul, date, emptyMsg) {
-    const list = state.sets.filter((s) => s.date === date);
+  function setsList(ul, date, emptyMsg, e) {
+    const list = state.sets.filter((s) => s.date === date && s.exerciseId === e.id);
     ul.innerHTML = list.length
-      ? list.map((s, i) => `<li><button type="button" data-id="${s.id}" aria-label="Set ${i + 1}, ${s.reps} reps, edit"><span class="sets__n">Set ${i + 1}</span><span class="sets__reps num">${s.reps}</span><span class="sets__edit">Edit</span></button></li>`).join("")
+      ? list.map((s, i) => `<li><button type="button" data-id="${s.id}" aria-label="Set ${i + 1}, ${e.say(s.reps)}, edit"><span class="sets__n">Set ${i + 1}</span><span class="sets__reps num">${e.show(s.reps)}</span><span class="sets__edit">Edit</span></button></li>`).join("")
       : `<li class="sets__empty">${emptyMsg}</li>`;
   }
 
-  function renderHome() {
-    const t = S.totals(state.sets), tt = t[TODAY] || 0, yt = t[yesterday] || 0;
-    $("home-title").textContent = longDate(TODAY);
-    $("streak-home").innerHTML = streakHtml(S.streak(state.sets, state.goal, TODAY));
-    $("streak-home").setAttribute("aria-label", "Streak: " + plural(S.streak(state.sets, state.goal, TODAY), "week"));
-    $("today-total").textContent = tt;
-    $("today-best").textContent = tt ? "Best set " + S.bestSet(state.sets, TODAY) : "Best set -";
-    const y = $("yday-total");
-    y.className = "figure figure--s num" + (yt ? "" : " figure--nodata");
-    y.textContent = yt ? yt : "No data";
-    $("yday-best").textContent = yt ? "Best set " + S.bestSet(state.sets, yesterday) : "";
-    $("gap").textContent = !yt ? (tt ? "Nothing from yesterday to compare." : "No sets yet. Add your first set below.")
-      : tt < yt ? (yt - tt) + " to match yesterday." : tt === yt ? "Level with yesterday." : (tt - yt) + " past yesterday.";
-    const bar = $("bar");
-    bar.style.setProperty("--p", yt ? Math.min(tt / yt, 1) : 0);
-    bar.classList.toggle("is-past", yt > 0 && tt > yt);
-    $("entry-home").dataset.date = TODAY;
-    setsList($("sets-home"), TODAY, "No sets yet today. Enter your first set above.");
+  // number wheel: a scroll-snap list of step, 2*step, ... up to max. Items tilt and fade away from the centre row.
+  const ROW = 44, calm = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  function makeWheel(el, first, start) {
+    let cfg = first, v = 0, max = 0, items = [];
+    const idx = (n) => n / cfg.step - 1;
+    const build = (m) => {
+      max = m;
+      el.innerHTML = Array.from({ length: Math.round(m / cfg.step) }, (_, i) => `<div class="wheel__i" aria-hidden="true">${cfg.show((i + 1) * cfg.step)}</div>`).join("");
+      items = [...el.children];
+      el.setAttribute("aria-valuemin", cfg.step);
+      el.setAttribute("aria-valuemax", m);
+    };
+    const paint = () => {
+      const pos = el.scrollTop / ROW;
+      items.forEach((it, i) => {
+        const d = Math.max(-3, Math.min(3, i - pos)), a = Math.abs(d);
+        it.style.opacity = 1 - a * 0.28;
+        it.style.transform = calm ? "" : `rotateX(${-d * 26}deg) scale(${1 - a * 0.1})`;
+      });
+    };
+    const place = () => { if (el.clientHeight) { el.scrollTop = idx(v) * ROW; paint(); } };
+    const label = () => { el.setAttribute("aria-valuenow", v); el.setAttribute("aria-valuetext", cfg.say(v)); };
+    const set = (n, smooth) => {
+      n = Math.max(cfg.step, Math.min(Math.round(n / cfg.step) * cfg.step, 9999));
+      if (n > max) build(n);
+      v = n;
+      label();
+      if (smooth && el.clientHeight && !calm) el.scrollTo({ top: idx(v) * ROW, behavior: "smooth" });
+      else place();
+    };
+    // only scrolling the user started may change the value; snap events from a wheel
+    // that was just shown (hidden tab, opening dialog) must not overwrite it
+    let raf = 0, user = false, idle = 0;
+    const touch = () => { user = true; clearTimeout(idle); idle = setTimeout(() => { user = false; }, 250); };
+    ["pointerdown", "touchstart", "wheel"].forEach((t) => el.addEventListener(t, touch, { passive: true }));
+    el.addEventListener("scroll", () => {
+      if (!el.clientHeight) return;
+      if (user) {
+        touch(); // momentum scrolling keeps the window open
+        v = Math.min((Math.round(el.scrollTop / ROW) + 1) * cfg.step, max);
+        label();
+      }
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(paint);
+    }, { passive: true });
+    el.addEventListener("click", (e) => { const i = items.indexOf(e.target.closest(".wheel__i")); if (i >= 0) set((i + 1) * cfg.step, true); });
+    el.addEventListener("keydown", (e) => {
+      const n = { ArrowUp: -1, ArrowDown: 1, PageUp: -10, PageDown: 10 }[e.key];
+      if (n) { e.preventDefault(); set(v + n * cfg.step, true); }
+      else if (e.key === "Enter") { e.preventDefault(); el.closest("form").requestSubmit(); }
+    });
+    // a wheel inside a hidden view or closed dialog has no height; restore the value when it appears
+    new ResizeObserver(place).observe(el);
+    build(Math.max(cfg.max, start));
+    set(start);
+    return {
+      get: () => v,
+      set,
+      // switch the wheel to another exercise (units, step, labels) and a value
+      config: (c, n) => { cfg = c; build(Math.max(c.max, n)); set(n); },
+    };
   }
 
+  // Home deck: one card per exercise
+  const deck = $("deck"), dots = $("dots");
+  const cardHtml = (e) => `<article class="card" data-ex="${e.id}" aria-labelledby="card-${e.id}">
+    <header class="card__head"><h2 id="card-${e.id}">${e.name}</h2><p class="streak" data-f="streak"></p></header>
+    <div class="pear">
+      <div class="beat opens">
+        <div class="beat__today"><p class="label">Today</p><p class="figure num" data-f="today">0</p><p class="label num" data-f="todayBest"></p></div>
+        <div class="beat__yday"><p class="label">Yesterday</p><p class="figure figure--s num" data-f="yday"></p><p class="label num" data-f="ydayBest"></p></div>
+      </div>
+      <p class="standfirst" data-f="gap"></p>
+      <div class="track" aria-hidden="true"><span data-f="bar"></span></div>
+    </div>
+    <form class="entry" data-ex="${e.id}" data-date="">
+      <span class="entry__label" id="lbl-${e.id}">${e.entry}</span>
+      <div class="entry__row">
+        <div class="wheelbox"><div class="wheel num" role="spinbutton" tabindex="0" aria-labelledby="lbl-${e.id}"></div></div>
+        <button class="btn btn--primary" type="submit">Add set</button>
+      </div>
+    </form>
+    <section class="card__sets" aria-label="Today's ${e.name} sets"><h3>Today&rsquo;s sets</h3><ul class="sets" data-f="sets"></ul></section>
+  </article>`;
+  deck.innerHTML = EXERCISES.map(cardHtml).join("");
+  dots.innerHTML = EXERCISES.map((e, i) => `<button type="button" data-i="${i}" aria-label="${e.name}"></button>`).join("");
+  const cards = {}, homeWheel = {};
+  EXERCISES.forEach((e) => {
+    const el = deck.querySelector(`article[data-ex="${e.id}"]`), f = { form: el.querySelector("form") };
+    el.querySelectorAll("[data-f]").forEach((n) => { f[n.dataset.f] = n; });
+    cards[e.id] = f;
+    homeWheel[e.id] = makeWheel(f.form.querySelector(".wheel"), e, e.start);
+  });
+  const dayWheel = makeWheel($("reps-day"), EXERCISES[0], EXERCISES[0].start);
+  const editWheel = makeWheel($("reps-edit"), EXERCISES[0], EXERCISES[0].start);
+  const recent = (e) => { const l = state.sets.filter((s) => s.exerciseId === e.id).pop(); return l ? l.reps : e.start; };
+
+  const syncDots = () => dots.querySelectorAll("button").forEach((b, i) => b.setAttribute("aria-current", String(EXERCISES[i].id === state.ex)));
+
+  // Card stack. `order` lists exercise ids front to back; a card's depth is its index.
+  // Drag the front card sideways and let go: it flies off with a tilt and goes to the back,
+  // and the cards behind scale up into place. Arrow keys and the dots do the same.
+  const PEEK = 14, SHRINK = 0.05, FAR = 90; // px of each card showing behind, scale lost per level, drag distance that counts as a throw
+  let order = EXERCISES.map((e) => e.id), busy = false, drag = null;
+  const cardEl = (id) => deck.querySelector(`article[data-ex="${id}"]`);
+  const pose = (d) => `translateY(${d * PEEK}px) scale(${1 - d * SHRINK})`;
+  const rotate = (n) => [...order.slice(n), ...order.slice(0, n)];
+  function layout(skip) {
+    order.forEach((id, d) => {
+      const el = cardEl(id);
+      if (el === skip) return;
+      el.style.transform = pose(d);
+      el.style.opacity = d > 2 ? 0 : 1; // only two cards peek out behind the front one
+      el.style.zIndex = order.length - d;
+      el.inert = d > 0; // cards behind can't be focused or tapped
+    });
+  }
+  function fling(dir, next) {
+    busy = true;
+    const out = cardEl(order[0]);
+    out.classList.remove("is-drag");
+    deck.classList.remove("dragging");
+    out.style.transition = calm ? "opacity 0.2s linear" : "transform 0.3s var(--ease-in), opacity 0.3s var(--ease-in)";
+    if (!calm) out.style.transform = `translateX(${dir * (innerWidth + 120)}px) rotate(${dir * 22}deg)`;
+    out.style.opacity = 0;
+    order = next;
+    state.ex = order[0];
+    syncDots();
+    layout(out);
+    // once it is off screen, drop it at the back of the stack without animating
+    setTimeout(() => {
+      out.style.transition = "none";
+      layout();
+      void out.offsetWidth;
+      out.style.transition = "";
+      busy = false;
+    }, 320);
+  }
+  const step = (dir) => { if (!busy && order.length > 1) fling(-dir, dir > 0 ? rotate(1) : rotate(order.length - 1)); };
+  function goTo(id) { const i = order.indexOf(id); if (i > 0 && !busy) fling(-1, rotate(i)); }
+  dots.addEventListener("click", (e) => { const b = e.target.closest("button[data-i]"); if (b) goTo(EXERCISES[+b.dataset.i].id); });
+  deck.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowRight") { e.preventDefault(); step(1); }
+    else if (e.key === "ArrowLeft") { e.preventDefault(); step(-1); }
+  });
+
+  // dragging: touch and mouse, front card only; controls inside the card keep working
+  deck.addEventListener("pointerdown", (e) => {
+    const el = e.target.closest(".card");
+    if (busy || order.length < 2 || !el || el.dataset.ex !== order[0] || e.button > 0 || e.target.closest(".wheel, button, a, input")) return;
+    drag = { id: e.pointerId, x: e.clientX, y: e.clientY, dx: 0, v: 0, t: performance.now(), on: false, el };
+  });
+  deck.addEventListener("pointermove", (e) => {
+    if (!drag || e.pointerId !== drag.id) return;
+    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    if (!drag.on) {
+      if (Math.abs(dx) < 8 || Math.abs(dx) < Math.abs(dy)) return; // vertical moves belong to the card's own scroll
+      drag.on = true;
+      drag.el.setPointerCapture(e.pointerId);
+      drag.el.classList.add("is-drag");
+      deck.classList.add("dragging");
+    }
+    const now = performance.now();
+    drag.v = (dx - drag.dx) / Math.max(1, now - drag.t);
+    drag.dx = dx; drag.t = now;
+    drag.el.style.transform = `translateX(${dx}px) rotate(${dx * 0.06}deg)`;
+    const p = Math.min(Math.abs(dx) / (FAR * 1.5), 1); // cards behind rise toward the front as you drag
+    order.forEach((id, d) => { if (d > 0) cardEl(id).style.transform = pose(Math.max(d - p, 0)); });
+  });
+  function endDrag() {
+    if (!drag) return;
+    const { on, dx, v, el } = drag;
+    drag = null;
+    if (!on) return;
+    el.classList.remove("is-drag");
+    deck.classList.remove("dragging");
+    if (Math.abs(dx) > FAR || (Math.abs(v) > 0.6 && Math.abs(dx) > 30)) fling(dx < 0 ? -1 : 1, rotate(1));
+    else layout(); // not far enough: everything springs back
+  }
+  deck.addEventListener("pointerup", endDrag);
+  deck.addEventListener("pointercancel", endDrag);
+
+  function renderHome() {
+    $("home-title").textContent = longDate(TODAY);
+    const n = S.streak(state.sets, state.goal, TODAY); // one streak for all exercises, shown on every card
+    EXERCISES.forEach((e) => {
+      const f = cards[e.id], t = S.totals(state.sets, e.id), tt = t[TODAY] || 0, yt = t[yesterday] || 0;
+      f.streak.innerHTML = streakHtml(n);
+      f.streak.setAttribute("aria-label", "Streak: " + plural(n, "week"));
+      f.today.textContent = e.show(tt);
+      f.todayBest.textContent = tt ? "Best set " + e.show(S.bestSet(state.sets, TODAY, e.id)) : "Best set -";
+      f.yday.className = "figure figure--s num" + (yt ? "" : " figure--nodata");
+      f.yday.textContent = yt ? e.show(yt) : "No data";
+      f.ydayBest.textContent = yt ? "Best set " + e.show(S.bestSet(state.sets, yesterday, e.id)) : "";
+      f.gap.textContent = !yt ? (tt ? "Nothing from yesterday to compare." : "No sets yet. Add your first set below.")
+        : tt < yt ? e.show(yt - tt) + " to match yesterday." : tt === yt ? "Level with yesterday." : e.show(tt - yt) + " past yesterday.";
+      f.bar.style.setProperty("--p", yt ? Math.min(tt / yt, 1) : 0);
+      f.bar.classList.toggle("is-past", yt > 0 && tt > yt);
+      f.form.dataset.date = TODAY;
+      setsList(f.sets, TODAY, "No sets yet today. Enter your first set above.", e);
+    });
+    syncDots();
+  }
+
+  // month view: one calendar for every exercise. A day is active if any set was logged,
+  // and its shade follows how many sets were done that day.
   function renderMonth() {
-    const dates = Object.keys(S.totals(state.sets)).sort();
+    const dates = Object.keys(S.counts(state.sets)).sort();
     const cur = TODAY.slice(0, 7), earliest = dates.length ? dates[0].slice(0, 7) : cur;
     const key = state.y + "-" + String(state.m).padStart(2, "0");
     $("prev").disabled = key <= earliest;
@@ -61,13 +284,13 @@
     const grid = S.monthCells(state.sets, state.goal, state.y, state.m, TODAY);
     $("month-grid").innerHTML = grid.cells.map((c) => {
       if (!c.date) return `<span class="day day--blank" aria-hidden="true"></span>`;
-      const label = shortDate(c.date) + ", " + (c.future ? "not available yet" : c.total ? c.total + " reps, level " + c.level + " of 4" + (c.flame ? ", week goal met" : "") : "no sets");
+      const label = shortDate(c.date) + ", " + (c.future ? "not available yet" : c.count ? plural(c.count, "set") + ", level " + c.level + " of 4" + (c.flame ? ", week goal met" : "") : "no sets");
       return `<button class="day${c.today ? " day--today" : ""}" type="button" data-date="${c.date}" data-level="${c.level}" aria-label="${label}"${c.future ? " disabled" : ""}>`
         + `<span class="day__n num">${c.day}</span>`
         + (c.flame ? `<svg class="day__flame" width="12" height="12" aria-hidden="true"><use href="#flame"/></svg>` : "")
-        + (c.total ? `<span class="day__reps num">${c.total}</span>` : "") + `</button>`;
+        + (c.count ? `<span class="day__reps num">${c.count}</span>` : "") + `</button>`;
     }).join("");
-    $("legend-note").textContent = grid.best ? "Shaded against your best day, " + grid.best + " reps." : "Shading starts after your first set.";
+    $("legend-note").textContent = grid.best ? "Shaded by sets done. Your busiest day: " + plural(grid.best, "set") + "." : "Shading starts after your first set.";
   }
 
   function renderSettings() {
@@ -78,39 +301,116 @@
     $("row-restore").hidden = !state.backup;
   }
 
-  let openDate = null;
+  // day sheet: lists the day's sets for every exercise; the picker chooses which exercise a new set is for
+  let openDate = null, dayEx = EXERCISES[0].id;
+  $("day-ex").innerHTML = EXERCISES.map((e) => `<button type="button" data-ex="${e.id}">${e.name}</button>`).join("");
+  $("day-ex").addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-ex]");
+    if (!b) return;
+    dayEx = b.dataset.ex;
+    dayWheel.config(exById[dayEx], recent(exById[dayEx]));
+    renderDay();
+  });
   function renderDay() {
     if (!openDate) return;
+    const ex = exById[dayEx], has = (e) => state.sets.some((s) => s.date === openDate && s.exerciseId === e.id);
     $("day-title").textContent = longDate(openDate);
     $("day-note").textContent = openDate < TODAY ? "Adding a set here fills in a past day." : "";
+    $("day-ex").querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.ex === ex.id)));
+    $("lbl-day").textContent = ex.entry;
     $("entry-day").dataset.date = openDate;
-    setsList($("sets-day"), openDate, "No sets this day. Add one below.");
+    const box = $("sets-day");
+    box.innerHTML = EXERCISES.some(has)
+      ? EXERCISES.filter(has).map((e) => `<h3 class="sheet__ex">${e.name}</h3><ul class="sets" data-ex="${e.id}"></ul>`).join("")
+      : `<ul class="sets"><li class="sets__empty">No sets this day. Add one below.</li></ul>`;
+    box.querySelectorAll("ul[data-ex]").forEach((ul) => setsList(ul, openDate, "", exById[ul.dataset.ex]));
   }
 
-  function render() { renderHome(); renderMonth(); renderSettings(); renderDay(); }
+  function render() { renderHome(); renderMonth(); renderSettings(); renderDay(); save(); }
+
+  // Celebration: full-screen confetti and a banner when today's total passes yesterday's.
+  const cheer = $("cheer"), cv = $("confetti");
+  let cheerTimer = 0, confettiRaf = 0;
+  function stopCheer() {
+    clearTimeout(cheerTimer);
+    cancelAnimationFrame(confettiRaf);
+    cv.getContext("2d").clearRect(0, 0, cv.width, cv.height);
+    cheer.classList.remove("on");
+    try { cheer.hidePopover(); } catch (x) { /* not open, or popovers unsupported */ }
+  }
+  function confetti() {
+    const dpr = devicePixelRatio || 1, W = innerWidth, H = innerHeight, g = cv.getContext("2d");
+    cv.width = W * dpr; cv.height = H * dpr;
+    g.scale(dpr, dpr);
+    const colors = ["#f2ce1f", "#d92225", "#34a85a", "#72e19a", "#14161a", "#ffffff"], ps = [];
+    const add = (x, y, a, s) => ps.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, w: 6 + Math.random() * 7, h: 4 + Math.random() * 6, r: Math.random() * 6.28, vr: (Math.random() - 0.5) * 0.4, c: colors[(Math.random() * colors.length) | 0], dot: Math.random() < 0.25, t: Math.random() * 6 });
+    // two cannons in the bottom corners, aimed up and inward
+    for (let i = 0; i < 80; i++) {
+      add(0, H, -0.7 - Math.random() * 0.7, 14 + Math.random() * 14);
+      add(W, H, -Math.PI + 0.7 + Math.random() * 0.7, 14 + Math.random() * 14);
+    }
+    const t0 = performance.now();
+    let last = t0;
+    (function frame(now) {
+      const dt = Math.min((now - last) / 16.67, 2.5), age = now - t0;
+      last = now;
+      if (age < 1400) for (let i = 0; i < 3; i++) add(Math.random() * W, -12, Math.PI / 2 + (Math.random() - 0.5) * 0.6, 2 + Math.random() * 3); // rain from the top
+      g.clearRect(0, 0, W, H);
+      let live = 0;
+      for (const p of ps) {
+        p.vy += 0.38 * dt;
+        p.vx *= Math.pow(0.985, dt);
+        p.vy *= Math.pow(0.992, dt);
+        p.x += p.vx * dt; p.y += p.vy * dt; p.r += p.vr * dt; p.t += 0.2 * dt;
+        if (p.y < H + 20) live++;
+        g.save();
+        g.translate(p.x, p.y);
+        g.rotate(p.r);
+        g.scale(1, Math.cos(p.t)); // flutter
+        g.fillStyle = p.c;
+        if (p.dot) { g.beginPath(); g.arc(0, 0, p.w / 2.5, 0, 6.29); g.fill(); } else g.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+        g.restore();
+      }
+      if (age < 1400 || live) confettiRaf = requestAnimationFrame(frame);
+    })(t0);
+  }
+  function celebrate(ex, now, target) {
+    stopCheer();
+    const msg = ex.name + ": " + ex.show(now) + " beats yesterday's " + ex.show(target) + ".";
+    $("cheer-sub").textContent = msg;
+    $("cheer-live").textContent = "";
+    setTimeout(() => { $("cheer-live").textContent = "Congratulations, champ! " + msg; }, 50); // a change after the last one, so it is announced
+    cheer.classList.add("on");
+    try { cheer.showPopover(); } catch (x) { /* falls back to plain z-order */ }
+    if (!calm) confetti();
+    cheerTimer = setTimeout(stopCheer, 4200);
+  }
+  // runs a change to today's sets and celebrates if it takes the total from at most yesterday's to above it
+  function beatYesterday(exId, change) {
+    const total = (d) => S.totals(state.sets, exId)[d] || 0, y = total(yesterday), before = total(TODAY);
+    change();
+    const after = total(TODAY);
+    if (y > 0 && before <= y && after > y) celebrate(exById[exId], after, y);
+  }
 
   // add a set; the date is read at submit time (a real build recomputes today here too)
-  function addSet(form, err) {
-    const input = form.elements.reps, raw = input.value.trim();
-    if (!/^[0-9]+$/.test(raw) || +raw < 1 || +raw > 9999) { err.textContent = "Enter a whole number from 1 to 9999."; input.focus(); return; }
-    err.textContent = "";
-    state.sets.push(mk(form.dataset.date, +raw));
-    input.value = "";
+  function addSet(form, wheel, ex) {
+    beatYesterday(ex, () => state.sets.push(mk(form.dataset.date, wheel.get(), ex)));
     render();
-    input.focus();
   }
-  $("entry-home").addEventListener("submit", (e) => { e.preventDefault(); addSet(e.target, $("err-home")); });
-  $("entry-day").addEventListener("submit", (e) => { e.preventDefault(); addSet(e.target, $("err-day")); });
+  deck.addEventListener("submit", (e) => { e.preventDefault(); addSet(e.target, homeWheel[e.target.dataset.ex], e.target.dataset.ex); });
+  $("entry-day").addEventListener("submit", (e) => { e.preventDefault(); addSet(e.target, dayWheel, dayEx); });
 
   // edit and delete
   let editing = null;
   function openEdit(id) {
     editing = state.sets.find((s) => s.id === id);
     if (!editing) return;
-    $("reps-edit").value = editing.reps;
-    $("err-edit").textContent = "";
+    const ex = exById[editing.exerciseId];
+    $("lbl-edit").textContent = ex.entry;
+    editWheel.config(ex, editing.reps);
     $("edit-sheet").showModal();
-    $("reps-edit").select();
+    $("reps-edit").focus();
   }
   document.addEventListener("click", (e) => {
     const row = e.target.closest(".sets button[data-id]");
@@ -118,14 +418,18 @@
     const close = e.target.closest("[data-close]");
     if (close) close.closest("dialog").close();
     const day = e.target.closest(".day[data-date]");
-    if (day && !day.disabled) { openDate = day.dataset.date; renderDay(); $("err-day").textContent = ""; $("day-sheet").showModal(); }
+    if (day && !day.disabled) {
+      openDate = day.dataset.date;
+      dayEx = state.ex; // start on the exercise whose card is in front on Home
+      dayWheel.config(exById[dayEx], recent(exById[dayEx]));
+      renderDay();
+      $("day-sheet").showModal();
+    }
   });
   $("day-sheet").addEventListener("close", () => { openDate = null; });
   $("edit-form").addEventListener("submit", (e) => {
     e.preventDefault();
-    const raw = $("reps-edit").value.trim();
-    if (!/^[0-9]+$/.test(raw) || +raw < 1 || +raw > 9999) { $("err-edit").textContent = "Enter a whole number from 1 to 9999."; return; }
-    editing.reps = +raw;
+    beatYesterday(editing.exerciseId, () => { editing.reps = editWheel.get(); });
     $("edit-sheet").close();
     render();
   });
@@ -153,7 +457,7 @@
   $("prev").addEventListener("click", () => { state.m--; if (state.m < 1) { state.m = 12; state.y--; } renderMonth(); });
   $("next").addEventListener("click", () => { state.m++; if (state.m > 12) { state.m = 1; state.y++; } renderMonth(); });
 
-  // weekly goal, with the old and new streak shown before it applies
+  // weekly goal (one goal for every exercise), with the old and new streaks shown before it applies
   function changeGoal(g) {
     const from = S.streak(state.sets, state.goal, TODAY), to = S.streak(state.sets, g, TODAY);
     ask("Change the weekly goal to " + plural(g, "day") + "?", "Your streak goes from " + plural(from, "week") + " to " + plural(to, "week") + ". The goal applies to every week, past and present.", "Change goal", () => { state.goal = g; render(); });
@@ -167,10 +471,11 @@
     const data = { schemaVersion: 1, settings: { weeklyGoal: state.goal, lastExportAt: state.lastExport }, sets: state.sets };
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
-    a.download = "pushup-tracker-" + new Date().toISOString().slice(0, 10) + ".json";
+    a.download = "workout-tracker-" + new Date().toISOString().slice(0, 10) + ".json";
     a.click();
     URL.revokeObjectURL(a.href);
     renderSettings();
+    save();
   });
 
   // import: validate everything, then confirm, then replace (the old data is kept for one undo)
@@ -178,7 +483,7 @@
     if (text.length > 2000000) return "The file is larger than 2 MB.";
     let d;
     try { d = JSON.parse(text); } catch (x) { return "The file is not valid JSON."; }
-    if (!d || d.schemaVersion !== 1 || !Array.isArray(d.sets) || !d.settings) return "The file is not a push-up export from this app.";
+    if (!d || d.schemaVersion !== 1 || !Array.isArray(d.sets) || !d.settings) return "The file is not an export from this app.";
     if (d.sets.length > 20000) return "The file has more than 20,000 sets.";
     const g = d.settings.weeklyGoal;
     if (!Number.isInteger(g) || g < 1 || g > 7) return "The weekly goal in the file is out of range.";
@@ -186,8 +491,8 @@
     for (const s of d.sets) {
       if (typeof s.id !== "string" || ids.has(s.id)) return "A set id is missing or repeated.";
       ids.add(s.id);
-      if (s.exerciseId !== "pushup") return "A set has an unknown exercise.";
-      if (!Number.isInteger(s.reps) || s.reps < 1 || s.reps > 9999) return "A set has reps outside 1 to 9999.";
+      if (!exById[s.exerciseId]) return "A set has an unknown exercise.";
+      if (!Number.isInteger(s.reps) || s.reps < 1 || s.reps > 9999) return "A set has a value outside 1 to 9999.";
       if (typeof s.date !== "string" || !/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(s.date) || S.toS(S.toN(s.date)) !== s.date || s.date > TODAY) return "A set has an invalid or future date.";
     }
     return d;
@@ -214,6 +519,7 @@
   // tabs, from the URL hash
   function route() {
     const v = ["home", "month", "settings"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "home";
+    if (v === "home") layout(); // place the stack while Home is still hidden, so nothing animates
     ["home", "month", "settings"].forEach((n) => { $("view-" + n).hidden = n !== v; });
     document.querySelectorAll(".tabs a").forEach((a) => { if (a.dataset.tab === v) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current"); });
     scrollTo(0, 0);
@@ -223,6 +529,13 @@
   $("first-run").hidden = !modes.includes("first");
   $("update").hidden = !modes.includes("update");
   $("reload").addEventListener("click", () => { $("update").hidden = true; });
-  render();
-  route();
+  // first paint waits for the saved data, so an empty state can never overwrite it
+  load().then(() => {
+    // start each add wheel on the most recent set of that exercise, a likely repeat
+    EXERCISES.forEach((e) => homeWheel[e.id].set(recent(e)));
+    render();
+    route();
+    // drop the old localStorage copy only once the snapshot is safely in IndexedDB
+    save().then((ok) => { if (ok) try { localStorage.removeItem(LEGACY_KEY); } catch (x) { /* ignore */ } });
+  });
 })();

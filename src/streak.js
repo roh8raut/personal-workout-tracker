@@ -5,13 +5,21 @@
   const toS = (n) => new Date(n * DAY).toISOString().slice(0, 10);
   const weekStart = (n) => n - ((new Date(n * DAY).getUTCDay() + 6) % 7); // Monday
 
-  function totals(sets) {
+  // totals and bestSet are per exercise (the Home cards); the streak and calendar merge all exercises.
+  function totals(sets, ex = "pushup") {
     const t = {};
-    for (const s of sets) if (s.exerciseId === "pushup") t[s.date] = (t[s.date] || 0) + s.reps;
+    for (const s of sets) if (s.exerciseId === ex) t[s.date] = (t[s.date] || 0) + s.reps;
     return t;
   }
-  function bestSet(sets, date) {
-    return Math.max(0, ...sets.filter((s) => s.exerciseId === "pushup" && s.date === date).map((s) => s.reps));
+  function bestSet(sets, date, ex = "pushup") {
+    return Math.max(0, ...sets.filter((s) => s.exerciseId === ex && s.date === date).map((s) => s.reps));
+  }
+  // Sets logged per day, across every exercise. The calendar and the streak use this:
+  // a day is active if any exercise was logged, and it is shaded by how many sets were done.
+  function counts(sets) {
+    const t = {};
+    for (const s of sets) t[s.date] = (t[s.date] || 0) + 1;
+    return t;
   }
   function bestDay(t) { return Math.max(0, ...Object.values(t)); }
   // ratio <= 25% -> 1, <= 50% -> 2, <= 75% -> 3, else 4; a boundary goes to the lower level
@@ -26,7 +34,7 @@
     return active >= goal;
   }
   function streak(sets, goal, today) {
-    const t = totals(sets);
+    const t = counts(sets);
     const dates = Object.keys(t);
     if (!dates.length) return 0;
     const cur = weekStart(toN(today));
@@ -40,18 +48,18 @@
   }
   // month is 1 to 12. Monday-first cells; null date = blank padding cell.
   function monthCells(sets, goal, year, month, today) {
-    const t = totals(sets), best = bestDay(t), todayN = toN(today);
+    const t = counts(sets), best = bestDay(t), todayN = toN(today);
     const first = Date.UTC(year, month - 1, 1) / DAY;
     const len = new Date(Date.UTC(year, month, 0)).getUTCDate();
     const cells = [];
     for (let i = 0; i < (new Date(first * DAY).getUTCDay() + 6) % 7; i++) cells.push({ date: null });
     for (let d = 0; d < len; d++) {
-      const n = first + d, date = toS(n), total = t[date] || 0;
-      cells.push({ date, day: d + 1, total, level: level(total, best), flame: total > 0 && weekMet(t, weekStart(n), goal), future: n > todayN, today: n === todayN });
+      const n = first + d, date = toS(n), count = t[date] || 0;
+      cells.push({ date, day: d + 1, count, level: level(count, best), flame: count > 0 && weekMet(t, weekStart(n), goal), future: n > todayN, today: n === todayN });
     }
     while (cells.length % 7) cells.push({ date: null });
     return { cells, best };
   }
-  const api = { toN, toS, totals, bestSet, bestDay, level, streak, monthCells };
+  const api = { toN, toS, totals, counts, bestSet, bestDay, level, streak, monthCells };
   if (typeof module !== "undefined") module.exports = api; else root.Streak = api;
 })(this);
