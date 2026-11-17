@@ -21,6 +21,10 @@
     for (const s of sets) t[s.date] = (t[s.date] || 0) + 1;
     return t;
   }
+  // the largest single set of one exercise, on any day
+  function bestEver(sets, ex = "pushup") {
+    return Math.max(0, ...sets.filter((s) => s.exerciseId === ex).map((s) => s.reps));
+  }
   function bestDay(t) { return Math.max(0, ...Object.values(t)); }
   // ratio <= 25% -> 1, <= 50% -> 2, <= 75% -> 3, else 4; a boundary goes to the lower level
   function level(total, best) {
@@ -60,6 +64,6 @@
     while (cells.length % 7) cells.push({ date: null });
     return { cells, best };
   }
-  const api = { toN, toS, totals, counts, bestSet, bestDay, level, streak, monthCells };
+  const api = { toN, toS, totals, counts, bestSet, bestEver, bestDay, level, streak, monthCells };
   if (typeof module !== "undefined") module.exports = api; else root.Streak = api;
 })(this);

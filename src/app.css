@@ -42,9 +42,11 @@ h2 { font-size: var(--text-section); line-height: 1.1; }
 .pear { padding: var(--space-lg) var(--space-lg) var(--space-md); border-radius: var(--radius-card); background: var(--grain), var(--color-accent); color: var(--color-accent-ink); box-shadow: var(--shadow-card); }
 .pear .label, .pear .figure, .pear .standfirst { color: var(--color-accent-ink); }
 .beat { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: var(--space-md); }
+.beat > div { container-type: inline-size; }
 .beat__yday { padding-left: var(--space-md); border-left: 2px solid color-mix(in oklab, var(--color-accent-ink) 22%, transparent); }
-.figure { margin: 0; font-variant-numeric: tabular-nums; font-size: var(--text-figure); line-height: 0.92; letter-spacing: var(--tracking-display); }
-.figure--s { font-size: var(--text-figure-s); font-variant-numeric: tabular-nums; }
+/* shrinks to fit its column: proto.js sets --chars to the value's length (a glyph is ~0.6em wide) */
+.figure { --fs: var(--text-figure); margin: 0; font-variant-numeric: tabular-nums; font-size: min(var(--fs), 155cqi / var(--chars, 1)); line-height: 0.92; letter-spacing: var(--tracking-display); }
+.figure--s { --fs: var(--text-figure-s); font-variant-numeric: tabular-nums; }
 .figure--nodata { font-size: var(--text-xl); line-height: 1.1; padding-top: var(--space-xs); }
 .standfirst { margin-top: var(--space-md); max-width: none; font-size: var(--text-xl); font-weight: 600; line-height: 1.15; letter-spacing: var(--tracking-display); }
 .track { height: 10px; margin-top: var(--space-md); border-radius: var(--radius-pill); background: color-mix(in oklab, var(--color-accent-ink) 16%, transparent); overflow: hidden; }
@@ -62,7 +64,7 @@ h2 { font-size: var(--text-section); line-height: 1.1; }
 .wheelbox { position: relative; flex: 1 1 auto; min-width: 0; height: 132px; border: var(--rule-hair) solid var(--color-muted); border-radius: var(--radius-input); background: var(--color-card); overflow: hidden; }
 .wheelbox::before { content: ""; position: absolute; inset: 44px 6px auto; height: 44px; border-radius: 10px; background: var(--color-sugar); }
 .wheelbox:has(.wheel:focus-visible) { outline: 2px solid var(--color-ink); outline-offset: 2px; }
-.wheel { position: relative; height: 100%; padding-block: 44px; box-sizing: border-box; overflow-y: auto; scroll-snap-type: y mandatory; overscroll-behavior: contain; scrollbar-width: none; outline: none; perspective: 240px;
+.wheel { position: relative; height: 100%; padding-block: 44px; box-sizing: border-box; overflow-y: auto; scroll-snap-type: y mandatory; overscroll-behavior-y: contain; scrollbar-width: none; outline: none; perspective: 240px;
   -webkit-mask-image: linear-gradient(transparent, #000 30%, #000 70%, transparent); mask-image: linear-gradient(transparent, #000 30%, #000 70%, transparent); }
 .wheel::-webkit-scrollbar { display: none; }
 .wheel__i { height: 44px; display: flex; align-items: center; justify-content: center; scroll-snap-align: center; scroll-snap-stop: always; font-family: var(--font-display); font-weight: 600; font-size: var(--text-xl); color: var(--color-ink); cursor: pointer; user-select: none; -webkit-user-select: none; }
@@ -142,23 +144,22 @@ h2 { font-size: var(--text-section); line-height: 1.1; }
 .tabs a:focus-visible { outline-offset: 2px; }
 .btn--danger { background: var(--grain), var(--color-red); color: var(--color-red-ink); box-shadow: inset 0 2px 0 0 color-mix(in oklab, var(--color-red-ink) 35%, transparent), 0 var(--edge) 0 0 var(--color-red-deep); }
 
-/* Home deck: one full-height card per exercise, vertical scroll-snap like a reel */
 .view--home h1 { font-size: var(--text-xl); }
 .dots { display: flex; }
 .dots button { display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; background: none; cursor: pointer; }
 .dots button::after { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--color-muted); opacity: 0.45; transition: width var(--dur-short) var(--ease-out), height var(--dur-short) var(--ease-out), opacity var(--dur-short) var(--ease-out); }
 .dots button[aria-current="true"]::after { width: 14px; height: 14px; background: var(--color-ink); opacity: 1; }
 .dots button:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; border-radius: 50%; }
-/* 192px = the head, the view's top padding and the tab bar area; keeps the page itself from scrolling */
-.deck { position: relative; height: calc(100dvh - 192px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); min-height: 420px; outline: none; }
+/* The cards share one grid cell, so they stack, and the stack is as tall as the tallest card (nothing is clipped).
+   proto.js poses each card by its depth. The padding above is where the cards behind show their top edges. */
+.deck { position: relative; display: grid; padding: calc(var(--space-lg) + var(--space-xs)) 0 var(--space-md); outline: none; }
 .deck:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; border-radius: var(--radius-card); }
-/* cards are stacked in the same spot; proto.js sets each one's transform from its depth in the stack.
-   The 28px at the bottom is where the two cards behind peek out. */
-.card { position: absolute; inset: 0 0 28px; box-sizing: border-box; overflow-y: auto; scrollbar-width: none; padding: var(--space-md); border-radius: var(--radius-card); background: var(--grain), var(--color-paper); box-shadow: var(--shadow-card), inset 0 0 0 1px var(--color-rule); transform-origin: 50% 100%; touch-action: pan-y; user-select: none; -webkit-user-select: none; will-change: transform; transition: transform 0.38s var(--ease-out), opacity 0.3s var(--ease-out); }
-.card::-webkit-scrollbar { display: none; }
-.card[inert] { overflow: hidden; filter: brightness(0.97); }
+.card { grid-area: 1 / 1; box-sizing: border-box; padding: var(--space-md) var(--space-md) var(--space-lg); border-radius: var(--radius-card); background: var(--grain), var(--color-paper); box-shadow: var(--shadow-card), inset 0 0 0 1px var(--color-rule); transform-origin: 50% 0; will-change: transform; transition: transform 0.55s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.3s var(--ease-out); }
+.card > * { transition: opacity 0.25s var(--ease-out); }
+.card:not(.is-front) > * { opacity: 0; } /* a card behind shows only its edge */
 .card.is-drag { cursor: grabbing; }
 .deck.dragging .card { transition: none; }
+.card__top { touch-action: none; cursor: grab; user-select: none; -webkit-user-select: none; }
 @media (prefers-reduced-motion: reduce) { .card { transition: opacity 0.2s linear; } }
 .card__head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-md); padding-bottom: var(--space-sm); }
 .card .entry { margin-top: var(--space-md); }
@@ -192,3 +193,4 @@ h2 { font-size: var(--text-section); line-height: 1.1; }
 }
 @keyframes cheer-fade { 0%, 100% { opacity: 0; } 10%, 85% { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .cheer__card { animation-name: cheer-fade; } }
+.pear__ever { margin-top: var(--space-sm); font-weight: 600; }

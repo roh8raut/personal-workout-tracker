@@ -132,6 +132,7 @@
   // Home deck: one card per exercise
   const deck = $("deck"), dots = $("dots");
   const cardHtml = (e) => `<article class="card" data-ex="${e.id}" aria-labelledby="card-${e.id}">
+    <div class="card__top">
     <header class="card__head"><h2 id="card-${e.id}">${e.name}</h2><p class="streak" data-f="streak"></p></header>
     <div class="pear">
       <div class="beat opens">
@@ -140,6 +141,8 @@
       </div>
       <p class="standfirst" data-f="gap"></p>
       <div class="track" aria-hidden="true"><span data-f="bar"></span></div>
+      <p class="label num pear__ever" data-f="allBest"></p>
+    </div>
     </div>
     <form class="entry" data-ex="${e.id}" data-date="">
       <span class="entry__label" id="lbl-${e.id}">${e.entry}</span>
@@ -165,85 +168,110 @@
 
   const syncDots = () => dots.querySelectorAll("button").forEach((b, i) => b.setAttribute("aria-current", String(EXERCISES[i].id === state.ex)));
 
-  // Card stack. `order` lists exercise ids front to back; a card's depth is its index.
-  // Drag the front card sideways and let go: it flies off with a tilt and goes to the back,
-  // and the cards behind scale up into place. Arrow keys and the dots do the same.
-  const PEEK = 14, SHRINK = 0.05, FAR = 90; // px of each card showing behind, scale lost per level, drag distance that counts as a throw
+  // Card stack, shuffled like a deck. `order` lists exercise ids front to back; a card's depth is its index.
+  // Swipe the top (yellow) part of the front card up or down: it slides out, tucks in behind the others,
+  // and the next card comes forward. The cards behind stay stacked, their top edges showing above the
+  // front card. Dots, the arrow keys and a tap on that strip of edges do the same.
+  const PEEK = 14, SHRINK = 0.05, FAR = 70; // px of each card showing above, scale lost per level, drag distance that counts as a swipe
   let order = EXERCISES.map((e) => e.id), busy = false, drag = null;
   const cardEl = (id) => deck.querySelector(`article[data-ex="${id}"]`);
-  const pose = (d) => `translateY(${d * PEEK}px) scale(${1 - d * SHRINK})`;
+  // every card transform uses the same three functions in the same order, so the browser can blend any two smoothly
+  const tf = (y, r, s) => `translateY(${y}px) rotate(${r}deg) scale(${s})`;
+  const pose = (d) => tf(-d * PEEK, 0, 1 - d * SHRINK); // behind cards sit higher, so their top edge shows above the front card
   const rotate = (n) => [...order.slice(n), ...order.slice(0, n)];
   function layout(skip) {
     order.forEach((id, d) => {
       const el = cardEl(id);
       if (el === skip) return;
-      el.style.transform = pose(d);
-      el.style.opacity = d > 2 ? 0 : 1; // only two cards peek out behind the front one
-      el.style.zIndex = order.length - d;
+      el.classList.toggle("is-front", d === 0);
       el.inert = d > 0; // cards behind can't be focused or tapped
+      el.style.transform = pose(d);
+      el.style.opacity = d > 2 ? 0 : 1; // only two cards show behind the front one
+      el.style.zIndex = order.length - d;
     });
   }
-  function fling(dir, next) {
-    busy = true;
+  // dir: -1 the front card leaves upward, 1 downward. next: the new order. y0, r0: where the card is right
+  // now, so a swipe in progress carries on from the finger instead of jumping.
+  const SHUFFLE_MS = 640;
+  function shuffle(dir, next, y0 = 0, r0 = 0) {
     const out = cardEl(order[0]);
-    out.classList.remove("is-drag");
-    deck.classList.remove("dragging");
-    out.style.transition = calm ? "opacity 0.2s linear" : "transform 0.3s var(--ease-in), opacity 0.3s var(--ease-in)";
-    if (!calm) out.style.transform = `translateX(${dir * (innerWidth + 120)}px) rotate(${dir * 22}deg)`;
-    out.style.opacity = 0;
     order = next;
     state.ex = order[0];
     syncDots();
-    layout(out);
-    // once it is off screen, drop it at the back of the stack without animating
-    setTimeout(() => {
-      out.style.transition = "none";
-      layout();
-      void out.offsetWidth;
-      out.style.transition = "";
-      busy = false;
-    }, 320);
+    out.classList.remove("is-drag");
+    deck.classList.remove("dragging");
+    if (calm) { layout(); return; }
+    busy = true;
+    // The old front card makes one continuous move: it eases out to a stop past the swipe, then eases back and
+    // settles behind the stack. It is at rest at the turn-around, so there is no sudden reversal. Only transform
+    // and opacity move, and it is one animation instead of two timed steps.
+    const depth = order.indexOf(out.dataset.ex), peakY = dir * Math.max(130, Math.abs(y0) + 40), top = order.length + 1;
+    layout(out); // the other cards step forward on their own transitions
+    out.style.transition = "none"; // a CSS transition would override the animation below
+    out.inert = true;
+    out.style.opacity = depth > 2 ? 0 : 1;
+    out.style.transform = pose(depth); // the end state, set up front so nothing flashes when the animation ends
+    out.style.zIndex = order.length - depth;
+    const peak = tf(peakY, dir * -4, 1.03);
+    const move = out.animate([
+      { transform: tf(y0, r0, 1), zIndex: top, easing: "cubic-bezier(0.2, 0.9, 0.3, 1)" },
+      { transform: peak, zIndex: top, offset: 0.4, easing: "linear" },
+      { transform: peak, zIndex: out.style.zIndex, offset: 0.401, easing: "cubic-bezier(0.5, 0, 0.2, 1)" }, // goes behind at the turn-around
+      { transform: pose(depth), zIndex: out.style.zIndex },
+    ], { duration: SHUFFLE_MS });
+    setTimeout(() => out.classList.remove("is-front"), SHUFFLE_MS * 0.4); // its contents fade once it is going behind
+    const done = () => { out.style.transition = ""; out.classList.remove("is-front"); busy = false; };
+    move.onfinish = done;
+    move.oncancel = done;
   }
-  const step = (dir) => { if (!busy && order.length > 1) fling(-dir, dir > 0 ? rotate(1) : rotate(order.length - 1)); };
-  function goTo(id) { const i = order.indexOf(id); if (i > 0 && !busy) fling(-1, rotate(i)); }
+  const step = (dir) => { if (!busy && order.length > 1) shuffle(-dir, dir > 0 ? rotate(1) : rotate(order.length - 1)); };
+  function goTo(id) { const i = order.indexOf(id); if (i > 0 && !busy) shuffle(-1, rotate(i)); }
   dots.addEventListener("click", (e) => { const b = e.target.closest("button[data-i]"); if (b) goTo(EXERCISES[+b.dataset.i].id); });
   deck.addEventListener("keydown", (e) => {
-    if (e.key === "ArrowRight") { e.preventDefault(); step(1); }
-    else if (e.key === "ArrowLeft") { e.preventDefault(); step(-1); }
+    if (e.target !== deck) return;
+    const n = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 }[e.key];
+    if (n) { e.preventDefault(); step(n); }
   });
+  // a tap on the strip of card edges above the front card brings the next one forward
+  deck.addEventListener("click", (e) => { if (e.target === deck) step(1); });
 
-  // dragging: touch and mouse, front card only; controls inside the card keep working
+  // swiping: touch and mouse. Only the top part of the front card (title and yellow panel) takes the swipe,
+  // so the wheel and the page below keep their normal scrolling.
   deck.addEventListener("pointerdown", (e) => {
-    const el = e.target.closest(".card");
-    if (busy || order.length < 2 || !el || el.dataset.ex !== order[0] || e.button > 0 || e.target.closest(".wheel, button, a, input")) return;
-    drag = { id: e.pointerId, x: e.clientX, y: e.clientY, dx: 0, v: 0, t: performance.now(), on: false, el };
+    const top = e.target.closest(".card__top");
+    if (busy || order.length < 2 || !top || e.button > 0 || top.closest(".card").dataset.ex !== order[0]) return;
+    drag = { id: e.pointerId, x: e.clientX, y: e.clientY, dy: 0, v: 0, t: performance.now(), on: false, el: top.closest(".card") };
   });
   deck.addEventListener("pointermove", (e) => {
     if (!drag || e.pointerId !== drag.id) return;
     const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
     if (!drag.on) {
-      if (Math.abs(dx) < 8 || Math.abs(dx) < Math.abs(dy)) return; // vertical moves belong to the card's own scroll
+      if (Math.abs(dy) < 8 || Math.abs(dy) < Math.abs(dx)) return;
       drag.on = true;
       drag.el.setPointerCapture(e.pointerId);
       drag.el.classList.add("is-drag");
       deck.classList.add("dragging");
     }
     const now = performance.now();
-    drag.v = (dx - drag.dx) / Math.max(1, now - drag.t);
-    drag.dx = dx; drag.t = now;
-    drag.el.style.transform = `translateX(${dx}px) rotate(${dx * 0.06}deg)`;
-    const p = Math.min(Math.abs(dx) / (FAR * 1.5), 1); // cards behind rise toward the front as you drag
+    drag.v = (dy - drag.dy) / Math.max(1, now - drag.t);
+    drag.dy = dy; drag.t = now;
+    drag.el.style.transform = tf(dy, dy * -0.012, 1);
+    const p = Math.min(Math.abs(dy) / (FAR * 1.5), 1); // the cards behind rise toward the front as you drag
     order.forEach((id, d) => { if (d > 0) cardEl(id).style.transform = pose(Math.max(d - p, 0)); });
   });
   function endDrag() {
     if (!drag) return;
-    const { on, dx, v, el } = drag;
+    const { on, dy, v, el } = drag;
     drag = null;
     if (!on) return;
     el.classList.remove("is-drag");
     deck.classList.remove("dragging");
-    if (Math.abs(dx) > FAR || (Math.abs(v) > 0.6 && Math.abs(dx) > 30)) fling(dx < 0 ? -1 : 1, rotate(1));
-    else layout(); // not far enough: everything springs back
+    if (Math.abs(dy) > FAR || (Math.abs(v) > 0.5 && Math.abs(dy) > 25)) shuffle(dy < 0 ? -1 : 1, rotate(1), dy, dy * -0.012);
+    else { // not far enough: it springs back, with a little overshoot
+      el.style.transition = "transform 0.5s cubic-bezier(0.2, 1.3, 0.4, 1)";
+      layout();
+      setTimeout(() => { el.style.transition = ""; }, 520);
+    }
   }
   deck.addEventListener("pointerup", endDrag);
   deck.addEventListener("pointercancel", endDrag);
@@ -260,10 +288,13 @@
       f.yday.className = "figure figure--s num" + (yt ? "" : " figure--nodata");
       f.yday.textContent = yt ? e.show(yt) : "No data";
       f.ydayBest.textContent = yt ? "Best set " + e.show(S.bestSet(state.sets, yesterday, e.id)) : "";
+      [f.today, f.yday].forEach((n) => n.style.setProperty("--chars", n.textContent.length));
       f.gap.textContent = !yt ? (tt ? "Nothing from yesterday to compare." : "No sets yet. Add your first set below.")
         : tt < yt ? e.show(yt - tt) + " to match yesterday." : tt === yt ? "Level with yesterday." : e.show(tt - yt) + " past yesterday.";
       f.bar.style.setProperty("--p", yt ? Math.min(tt / yt, 1) : 0);
       f.bar.classList.toggle("is-past", yt > 0 && tt > yt);
+      const ever = S.bestEver(state.sets, e.id);
+      f.allBest.textContent = ever ? "All-time best set " + e.show(ever) : "All-time best set -";
       f.form.dataset.date = TODAY;
       setsList(f.sets, TODAY, "No sets yet today. Enter your first set above.", e);
     });

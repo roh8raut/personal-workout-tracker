@@ -55,4 +55,9 @@ assert.equal(S.monthCells(both, 5, 2026, 2, "2026-02-15").best, 3);
 assert.deepEqual(S.totals(mixed, "plank"), { "2026-02-12": 90, "2026-02-13": 60 });
 assert.equal(S.bestSet(mixed, "2026-02-12", "plank"), 90);
 assert.equal(S.bestSet(mixed, "2026-02-12"), 0);
+// All-time best set: the biggest single set of that exercise on any day, never mixed across exercises
+const ever = [set("2026-01-05", 25), set("2026-02-12", 60), set("2026-02-12", 40), set("2026-02-12", 200, "plank")];
+assert.equal(S.bestEver(ever), 60);
+assert.equal(S.bestEver(ever, "plank"), 200);
+assert.equal(S.bestEver([], "plank"), 0);
 console.log("streak checks pass");
