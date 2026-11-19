@@ -145,7 +145,7 @@ h2 { font-size: var(--text-section); line-height: 1.1; }
 .btn--danger { background: var(--grain), var(--color-red); color: var(--color-red-ink); box-shadow: inset 0 2px 0 0 color-mix(in oklab, var(--color-red-ink) 35%, transparent), 0 var(--edge) 0 0 var(--color-red-deep); }
 
 .view--home h1 { font-size: var(--text-xl); }
-.dots { display: flex; }
+.dots { display: flex; margin-left: auto; }
 .dots button { display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; background: none; cursor: pointer; }
 .dots button::after { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--color-muted); opacity: 0.45; transition: width var(--dur-short) var(--ease-out), height var(--dur-short) var(--ease-out), opacity var(--dur-short) var(--ease-out); }
 .dots button[aria-current="true"]::after { width: 14px; height: 14px; background: var(--color-ink); opacity: 1; }
@@ -194,3 +194,40 @@ h2 { font-size: var(--text-section); line-height: 1.1; }
 @keyframes cheer-fade { 0%, 100% { opacity: 0; } 10%, 85% { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .cheer__card { animation-name: cheer-fade; } }
 .pear__ever { margin-top: var(--space-sm); font-weight: 600; }
+.pear__ever + .pear__ever { margin-top: var(--space-2xs); }
+
+/* Settings: exercises */
+.exblock { margin-bottom: var(--space-xl); }
+.exblock h2 { margin-bottom: var(--space-sm); }
+.exlist { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-sm); }
+.textfield { width: 100%; box-sizing: border-box; height: 56px; padding: 0 var(--space-md); border: var(--rule-hair) solid var(--color-muted); border-radius: var(--radius-input); background: var(--color-paper); color: var(--color-ink); font-family: var(--font-display); font-weight: 600; font-size: var(--text-lg); }
+.textfield:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.seg { flex-wrap: wrap; }
+.view--home .head { flex-wrap: wrap; }
+
+/* Ghost card: a dashed, blank card at the back of the stack; only its dashed edge shows until it is pulled forward */
+.card--new { background: color-mix(in oklab, var(--color-paper) 60%, transparent); border: 2px dashed var(--color-muted); box-shadow: none; }
+.card--new .card__head h2 { display: flex; align-items: center; gap: var(--space-xs); }
+.ghost__lead { margin: 0 0 var(--space-xs); color: var(--color-ink-2); }
+.newform { margin-top: var(--space-sm); }
+.newform .entry__label { margin-top: var(--space-sm); }
+.newform .seg { margin: var(--space-sm) 0 0; }
+.newform .btn { margin-top: var(--space-xs); }
+.chips { display: flex; flex-wrap: wrap; gap: var(--space-xs); }
+.chip { min-height: 40px; padding: 0 var(--space-md); border: 1.5px dashed var(--color-muted); border-radius: var(--radius-pill); background: none; color: var(--color-ink); font-size: var(--text-md); font-weight: 600; cursor: pointer; }
+.chip small { color: var(--color-muted); font-size: var(--text-xs); font-weight: 500; }
+.chip[aria-pressed="true"] { border: 1.5px solid transparent; background: var(--color-accent); color: var(--color-accent-ink); }
+.chip[aria-pressed="true"] small { color: inherit; }
+.chip:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.dots .dot--new::after { content: "+"; display: grid; place-items: center; width: 14px; height: 14px; border-radius: 0; background: none; color: var(--color-muted); font: 700 20px/1 var(--font-display); opacity: 0.8; }
+.dots .dot--new[aria-current="true"]::after { background: none; color: var(--color-ink); opacity: 1; }
+
+/* the ghost card morphs into the new card */
+::view-transition-group(excard) { animation-duration: 0.5s; animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1); }
+::view-transition-group(root) { animation-duration: 0.3s; }
+
+/* snackbar with Undo */
+.snack { position: fixed; left: 50%; bottom: calc(var(--tab-h) + var(--space-lg) + env(safe-area-inset-bottom)); z-index: var(--z-toast); box-sizing: border-box; width: min(calc(100% - 2 * var(--space-md)), 28rem); display: flex; align-items: center; justify-content: space-between; gap: var(--space-md); padding: var(--space-xs) var(--space-xs) var(--space-xs) var(--space-md); border-radius: var(--radius-stock); background: var(--color-ink); color: var(--color-paper); font-weight: 600; box-shadow: var(--shadow-card); opacity: 0; visibility: hidden; translate: -50% 16px; transition: opacity 0.25s var(--ease-out), translate 0.35s var(--ease-out), visibility 0s 0.35s; }
+.snack.on { opacity: 1; visibility: visible; translate: -50% 0; transition-delay: 0s; }
+.snack .btn { min-height: 44px; margin: 0; --edge: 0px; background: none; color: var(--color-accent); box-shadow: inset 0 0 0 1px var(--color-accent); }
+@media (prefers-reduced-motion: reduce) { .snack { transition: opacity 0.2s linear; translate: -50% 0; } }

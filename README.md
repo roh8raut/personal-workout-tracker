@@ -6,7 +6,7 @@ A personal workout tracker for push-ups and planks, built as a PWA for iPhone. N
 
 ## What it does (v1)
 
-- Log sets of push-ups (reps) and planks (time) with a scroll wheel. Home is a stack of cards, one per exercise: swipe the top card away to reach the next. Each card shows today's total against yesterday's number to beat. More exercises can be added in the `EXERCISES` list in `src/proto.js`.
+- Log sets of push-ups (reps) and planks (time) with a scroll wheel. Home is a stack of cards, one per exercise: swipe the top card away to reach the next. Each card shows today's total against yesterday's number to beat. Add your own exercises (up to 8 in total) from the dashed "New exercise" card at the back of the stack: pick a quick suggestion or type a name, and choose whether it is counted in reps or timed. Remove them in Settings, with Undo.
 - One weekly streak across all exercises: a day is active if you logged any set, and a week counts when you hit your goal (default 5 active days, adjustable). No rest passes.
 - Month view: one merged Monday-first calendar. Each day is shaded by how many sets you did that day, across exercises, with flames on goal weeks. Tap a day to see its sets, edit, delete or backfill.
 - Beta: data stays in the browser's IndexedDB only. Export and import a JSON backup from Settings, since clearing Safari data or losing the install would erase it.

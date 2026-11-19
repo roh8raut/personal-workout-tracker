@@ -7,7 +7,7 @@
 <title>Workout tracker</title>
 <meta name="description" content="A personal workout tracker: log sets of push-ups and planks, beat yesterday, keep a weekly streak.">
 <link href="https://api.fontshare.com/v2/css?f[]=chillax@500,600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="app.css?v=15">
+<link rel="stylesheet" href="app.css?v=19">
 </head>
 <body>
 <svg width="0" height="0" aria-hidden="true" focusable="false">
@@ -57,6 +57,12 @@
 
     <section class="view" id="view-settings" aria-labelledby="settings-title" hidden>
       <header class="head"><h1 id="settings-title">Settings</h1></header>
+
+      <section class="exblock" aria-labelledby="ex-title">
+        <h2 id="ex-title">Exercises</h2>
+        <ul class="exlist" id="ex-list"></ul>
+        <p class="note" id="ex-hint"></p>
+      </section>
 
       <div class="rows opens">
         <div class="row">
@@ -146,6 +152,11 @@
   </div>
 </dialog>
 
+<div class="snack" id="snack" role="status" aria-live="polite">
+  <span id="snack-text"></span>
+  <button class="btn btn--secondary" type="button" id="snack-undo">Undo</button>
+</div>
+
 <!-- shown when today's total passes yesterday's: a popover, so it sits above any open sheet -->
 <div class="cheer" id="cheer" popover="manual" aria-hidden="true">
   <canvas class="cheer__canvas" id="confetti"></canvas>
@@ -159,7 +170,7 @@
 </div>
 <p class="visually-hidden" id="cheer-live" role="status"></p>
 
-<script src="streak.js?v=15"></script>
-<script src="proto.js?v=15"></script>
+<script src="streak.js?v=19"></script>
+<script src="proto.js?v=19"></script>
 </body>
 </html>

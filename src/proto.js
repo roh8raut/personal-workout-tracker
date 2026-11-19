@@ -10,19 +10,27 @@
   let nextId = 1;
   const mk = (date, reps, ex) => ({ id: "s" + nextId++, exerciseId: ex, reps, date });
 
-  // Exercises. Add an entry here and it gets a card on Home and a button on Month.
-  // A set's `reps` field holds the wheel value: reps for counted exercises, seconds for timed ones.
-  // step/max/start size the number wheel; show formats a value, say reads it aloud.
-  const EXERCISES = [
-    { id: "pushup", name: "Push-ups", entry: "Reps in this set", step: 1, max: 300, start: 20,
-      show: (n) => String(n), say: (n) => plural(n, "rep") },
-    { id: "plank", name: "Planks", entry: "Time in this set", step: 5, max: 600, start: 30,
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  // Exercises. Push-ups and Planks are built in; the rest are added in Settings and kept in state.custom.
+  // kind "reps" is a counted set, kind "time" is seconds shown as m:ss. A set's `reps` field holds the wheel
+  // value either way. step/max/start size the number wheel; show formats a value, say reads it aloud.
+  const KINDS = {
+    reps: { entry: "Reps in this set", step: 1, max: 300, start: 20, show: (n) => String(n), say: (n) => plural(n, "rep") },
+    time: { entry: "Time in this set", step: 5, max: 600, start: 30,
       show: (s) => Math.floor(s / 60) + ":" + p2(s % 60),
       say: (s) => ((s >= 60 ? Math.floor(s / 60) + " min " : "") + (s % 60 ? (s % 60) + " sec" : "")).trim() },
-  ];
-  const exById = Object.fromEntries(EXERCISES.map((e) => [e.id, e]));
+  };
+  const BUILTIN = [{ id: "pushup", name: "Push-ups", kind: "reps" }, { id: "plank", name: "Planks", kind: "time" }];
+  const MAX_EXERCISES = 8, NAME_MAX = 24, NEW = "__new"; // NEW is the ghost card, never a real exercise (ids cannot contain "_")
+  const spec = (d) => Object.assign({}, KINDS[d.kind], d);
+  // a stored or imported exercise definition: a safe id, a short name, a known kind, and not a built-in id
+  const validDef = (d) => !!d && typeof d.id === "string" && /^[a-z0-9-]{1,40}$/.test(d.id) && !BUILTIN.some((b) => b.id === d.id)
+    && typeof d.name === "string" && d.name.trim().length > 0 && d.name.length <= NAME_MAX && !!KINDS[d.kind];
+  const cleanDefs = (list) => list.map((d) => ({ id: d.id, name: d.name.trim(), kind: d.kind }));
+  let EXERCISES = BUILTIN.map(spec), exById = Object.fromEntries(EXERCISES.map((e) => [e.id, e]));
 
-  const state = { goal: 5, sets: [], lastExport: null, backup: null, y: +TODAY.slice(0, 4), m: +TODAY.slice(5, 7), ex: EXERCISES[0].id };
+  const state = { goal: 5, sets: [], custom: [], lastExport: null, backup: null, y: +TODAY.slice(0, 4), m: +TODAY.slice(5, 7), ex: BUILTIN[0].id };
 
   // persistence: one snapshot record in IndexedDB (db "pushup-tracker", store "kv", key "state")
   const LEGACY_KEY = "pushup-tracker:v1"; // old localStorage copy, migrated once
@@ -37,16 +45,17 @@
     t.oncomplete = () => res(q.result);
     t.onerror = t.onabort = () => rej(t.error);
   }));
-  const snapshot = () => ({ goal: state.goal, sets: state.sets, lastExport: state.lastExport, backup: state.backup });
+  const snapshot = () => ({ goal: state.goal, sets: state.sets, custom: state.custom, lastExport: state.lastExport, backup: state.backup });
   function save() { return idb("readwrite", (s) => s.put(snapshot(), "state")).then(() => true, () => false); } // false: blocked or full, keep running in memory
   function load() {
     return idb("readonly", (s) => s.get("state")).catch(() => null).then((saved) => {
       if (!saved) { try { saved = JSON.parse(localStorage.getItem(LEGACY_KEY)); } catch (x) { saved = null; } }
       if (saved && Array.isArray(saved.sets)) {
         Object.assign(state, { goal: saved.goal, sets: saved.sets, lastExport: saved.lastExport, backup: saved.backup });
+        state.custom = Array.isArray(saved.custom) ? cleanDefs(saved.custom.filter(validDef)).slice(0, MAX_EXERCISES - BUILTIN.length) : [];
         nextId = 1 + Math.max(0, ...state.sets.map((s) => parseInt(String(s.id).slice(1), 10) || 0));
       }
-      if (modes.includes("backup")) state.backup = { goal: 5, sets: [], lastExport: null };
+      if (modes.includes("backup")) state.backup = { goal: 5, sets: [], custom: [], lastExport: null };
     });
   }
 
@@ -133,7 +142,7 @@
   const deck = $("deck"), dots = $("dots");
   const cardHtml = (e) => `<article class="card" data-ex="${e.id}" aria-labelledby="card-${e.id}">
     <div class="card__top">
-    <header class="card__head"><h2 id="card-${e.id}">${e.name}</h2><p class="streak" data-f="streak"></p></header>
+    <header class="card__head"><h2 id="card-${e.id}">${esc(e.name)}</h2><p class="streak" data-f="streak"></p></header>
     <div class="pear">
       <div class="beat opens">
         <div class="beat__today"><p class="label">Today</p><p class="figure num" data-f="today">0</p><p class="label num" data-f="todayBest"></p></div>
@@ -142,6 +151,7 @@
       <p class="standfirst" data-f="gap"></p>
       <div class="track" aria-hidden="true"><span data-f="bar"></span></div>
       <p class="label num pear__ever" data-f="allBest"></p>
+      <p class="label num pear__ever" data-f="allDay"></p>
     </div>
     </div>
     <form class="entry" data-ex="${e.id}" data-date="">
@@ -151,22 +161,41 @@
         <button class="btn btn--primary" type="submit">Add set</button>
       </div>
     </form>
-    <section class="card__sets" aria-label="Today's ${e.name} sets"><h3>Today&rsquo;s sets</h3><ul class="sets" data-f="sets"></ul></section>
+    <section class="card__sets" aria-label="Today's ${esc(e.name)} sets"><h3>Today&rsquo;s sets</h3><ul class="sets" data-f="sets"></ul></section>
   </article>`;
-  deck.innerHTML = EXERCISES.map(cardHtml).join("");
-  dots.innerHTML = EXERCISES.map((e, i) => `<button type="button" data-i="${i}" aria-label="${e.name}"></button>`).join("");
-  const cards = {}, homeWheel = {};
-  EXERCISES.forEach((e) => {
-    const el = deck.querySelector(`article[data-ex="${e.id}"]`), f = { form: el.querySelector("form") };
-    el.querySelectorAll("[data-f]").forEach((n) => { f[n.dataset.f] = n; });
-    cards[e.id] = f;
-    homeWheel[e.id] = makeWheel(f.form.querySelector(".wheel"), e, e.start);
-  });
+  let cards = {}, homeWheel = {};
   const dayWheel = makeWheel($("reps-day"), EXERCISES[0], EXERCISES[0].start);
   const editWheel = makeWheel($("reps-edit"), EXERCISES[0], EXERCISES[0].start);
   const recent = (e) => { const l = state.sets.filter((s) => s.exerciseId === e.id).pop(); return l ? l.reps : e.start; };
+  // (re)build the cards, dots, wheels and the day sheet's exercise picker from EXERCISES
+  function buildDeck() {
+    const ids = [...EXERCISES.map((e) => e.id), ...(EXERCISES.length < MAX_EXERCISES ? [NEW] : [])]; // no ghost card once you are at the limit
+    deck.innerHTML = EXERCISES.map(cardHtml).join("") + (ids.includes(NEW) ? ghostHtml() : "");
+    dots.innerHTML = ids.map((id, i) => id === NEW
+      ? `<button type="button" class="dot--new" data-i="${i}" data-id="${NEW}" aria-label="New exercise"></button>`
+      : `<button type="button" data-i="${i}" data-id="${id}" aria-label="${esc(exById[id].name)}"></button>`).join("");
+    $("day-ex").innerHTML = EXERCISES.map((e) => `<button type="button" data-ex="${e.id}">${esc(e.name)}</button>`).join("");
+    cards = {}; homeWheel = {};
+    EXERCISES.forEach((e) => {
+      const el = deck.querySelector(`article[data-ex="${e.id}"]`), f = { form: el.querySelector("form") };
+      el.querySelectorAll("[data-f]").forEach((n) => { f[n.dataset.f] = n; });
+      cards[e.id] = f;
+      homeWheel[e.id] = makeWheel(f.form.querySelector(".wheel"), e, recent(e)); // starts on the last set, a likely repeat
+    });
+    previewWheel = ids.includes(NEW) ? makeWheel($("new-preview"), KINDS[newKind], KINDS[newKind].start) : null;
+    order = [state.ex, ...ids.filter((id) => id !== state.ex)]; // the front card stays in front, the ghost card goes last
+    layout();
+  }
+  // apply state.custom: rebuild everything that lists exercises
+  function defineExercises() {
+    EXERCISES = [...BUILTIN, ...state.custom].map(spec);
+    exById = Object.fromEntries(EXERCISES.map((e) => [e.id, e]));
+    if (!exById[state.ex]) state.ex = EXERCISES[0].id;
+    if (!exById[dayEx]) dayEx = EXERCISES[0].id;
+    buildDeck();
+  }
 
-  const syncDots = () => dots.querySelectorAll("button").forEach((b, i) => b.setAttribute("aria-current", String(EXERCISES[i].id === state.ex)));
+  const syncDots = () => dots.querySelectorAll("button").forEach((b) => b.setAttribute("aria-current", String(b.dataset.id === order[0])));
 
   // Card stack, shuffled like a deck. `order` lists exercise ids front to back; a card's depth is its index.
   // Swipe the top (yellow) part of the front card up or down: it slides out, tucks in behind the others,
@@ -196,7 +225,7 @@
   function shuffle(dir, next, y0 = 0, r0 = 0) {
     const out = cardEl(order[0]);
     order = next;
-    state.ex = order[0];
+    if (order[0] !== NEW) state.ex = order[0]; // state.ex is always a real exercise (the day sheet and Month use it)
     syncDots();
     out.classList.remove("is-drag");
     deck.classList.remove("dragging");
@@ -226,7 +255,7 @@
   }
   const step = (dir) => { if (!busy && order.length > 1) shuffle(-dir, dir > 0 ? rotate(1) : rotate(order.length - 1)); };
   function goTo(id) { const i = order.indexOf(id); if (i > 0 && !busy) shuffle(-1, rotate(i)); }
-  dots.addEventListener("click", (e) => { const b = e.target.closest("button[data-i]"); if (b) goTo(EXERCISES[+b.dataset.i].id); });
+  dots.addEventListener("click", (e) => { const b = e.target.closest("button[data-i]"); if (b) goTo(b.dataset.id); });
   deck.addEventListener("keydown", (e) => {
     if (e.target !== deck) return;
     const n = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 }[e.key];
@@ -276,6 +305,103 @@
   deck.addEventListener("pointerup", endDrag);
   deck.addEventListener("pointercancel", endDrag);
 
+  // Ghost card: a blank, dashed card at the back of the stack. Pull it forward to add an exercise right where
+  // the cards live. Quick-pick chips carry a preset type, so most of the time nothing needs typing, and the
+  // wheel below shows how a set will be logged for the chosen type.
+  const SUGGEST = [["Squats", "reps"], ["Lunges", "reps"], ["Pull-ups", "reps"], ["Dips", "reps"], ["Wall sit", "time"], ["Dead hang", "time"], ["Sit-ups", "reps"], ["Burpees", "reps"], ["Side plank", "time"]];
+  let newKind = "reps", previewWheel = null;
+  const ghostHtml = () => `<article class="card card--new" data-ex="${NEW}" aria-labelledby="card-new">
+    <div class="card__top">
+      <header class="card__head"><h2 id="card-new"><svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></svg>New exercise</h2></header>
+      <p class="ghost__lead">Pick one, or name your own.</p>
+    </div>
+    <form class="entry newform" id="new-form" novalidate>
+      <div class="chips" id="new-chips" role="group" aria-label="Quick pick"></div>
+      <label class="entry__label" for="new-name">Name</label>
+      <input class="textfield" id="new-name" type="text" maxlength="${NAME_MAX}" autocomplete="off" autocapitalize="words" enterkeyhint="done" placeholder="For example, Squats" aria-describedby="err-new">
+      <div class="seg" id="new-kind" role="group" aria-label="How it is counted">
+        <button type="button" data-kind="reps" aria-pressed="true">Reps</button>
+        <button type="button" data-kind="time" aria-pressed="false">Time</button>
+      </div>
+      <span class="entry__label" id="lbl-new">How you will log it</span>
+      <div class="wheelbox"><div class="wheel num" id="new-preview" role="spinbutton" tabindex="0" aria-labelledby="lbl-new"></div></div>
+      <p class="error" id="err-new" role="alert"></p>
+      <button class="btn btn--primary" type="submit">Add exercise</button>
+    </form>
+  </article>`;
+  function renderGhost() {
+    if (!$("new-form")) return; // no ghost card at the exercise limit
+    const have = new Set(EXERCISES.map((e) => e.name.toLowerCase())), typed = $("new-name").value.trim().toLowerCase();
+    $("new-chips").innerHTML = SUGGEST.filter(([n]) => !have.has(n.toLowerCase())).slice(0, 6)
+      .map(([n, k]) => `<button type="button" class="chip" data-name="${esc(n)}" data-kind="${k}" aria-pressed="${typed === n.toLowerCase()}">${esc(n)}${k === "time" ? " <small>timed</small>" : ""}</button>`).join("");
+    $("new-kind").querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.kind === newKind)));
+  }
+  function setKind(k) { newKind = k; previewWheel.config(KINDS[k], KINDS[k].start); renderGhost(); }
+  deck.addEventListener("click", (e) => {
+    const chip = e.target.closest(".chip"), kind = e.target.closest("#new-kind button");
+    if (chip) { $("new-name").value = chip.dataset.name; $("err-new").textContent = ""; setKind(chip.dataset.kind); }
+    else if (kind) setKind(kind.dataset.kind);
+  });
+  deck.addEventListener("input", (e) => { if (e.target.id === "new-name") renderGhost(); });
+  // run a change inside a View Transition so the ghost card morphs into the card it became
+  function morph(apply) {
+    if (calm || !document.startViewTransition) { apply(); return; }
+    cardEl(NEW).style.viewTransitionName = "excard";
+    const t = document.startViewTransition(() => {
+      apply();
+      const to = deck.querySelector(".card.is-front");
+      if (to) to.style.viewTransitionName = "excard";
+    });
+    t.finished.finally(() => deck.querySelectorAll(".card").forEach((c) => { c.style.viewTransitionName = ""; }));
+  }
+  function createExercise() {
+    const name = $("new-name").value.trim().replace(/\s+/g, " "), err = $("err-new");
+    if (!name) { err.textContent = "Pick one above or type a name."; $("new-name").focus(); return; }
+    if (EXERCISES.some((x) => x.name.toLowerCase() === name.toLowerCase())) { err.textContent = "You already have an exercise with that name."; $("new-name").focus(); return; }
+    if (EXERCISES.length >= MAX_EXERCISES) { err.textContent = "You can have up to " + MAX_EXERCISES + " exercises."; return; }
+    const id = "c" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), kind = newKind;
+    hideSnack(); // an Undo for an earlier removal ends here
+    newKind = "reps";
+    morph(() => {
+      state.custom.push({ id, name, kind });
+      state.ex = id; // Home opens on the new card
+      defineExercises();
+      render();
+    });
+  }
+
+  // Remove with Undo: no confirm dialog, the change is applied and a snackbar offers to take it back for a few seconds.
+  const snack = $("snack");
+  let snackTimer = 0, undoSlot = null;
+  function hideSnack() { clearTimeout(snackTimer); snack.classList.remove("on"); undoSlot = null; }
+  function showSnack(text) {
+    $("snack-text").textContent = text;
+    snack.classList.add("on");
+    clearTimeout(snackTimer);
+    snackTimer = setTimeout(hideSnack, 9000);
+  }
+  snack.addEventListener("focusin", () => clearTimeout(snackTimer)); // keyboard and screen-reader users keep the Undo
+  $("snack-undo").addEventListener("click", () => {
+    const u = undoSlot;
+    hideSnack();
+    if (!u) return;
+    state.custom.splice(Math.min(u.idx, state.custom.length), 0, u.def);
+    state.sets.push(...u.sets);
+    defineExercises();
+    render();
+  });
+  function removeExercise(id) {
+    const idx = state.custom.findIndex((c) => c.id === id);
+    if (idx < 0) return;
+    const def = state.custom[idx], sets = state.sets.filter((s) => s.exerciseId === id);
+    state.custom.splice(idx, 1);
+    state.sets = state.sets.filter((s) => s.exerciseId !== id);
+    defineExercises();
+    render();
+    undoSlot = { def, idx, sets };
+    showSnack(def.name + " removed" + (sets.length ? " with " + plural(sets.length, "set") : ""));
+  }
+
   function renderHome() {
     $("home-title").textContent = longDate(TODAY);
     const n = S.streak(state.sets, state.goal, TODAY); // one streak for all exercises, shown on every card
@@ -295,10 +421,13 @@
       f.bar.classList.toggle("is-past", yt > 0 && tt > yt);
       const ever = S.bestEver(state.sets, e.id);
       f.allBest.textContent = ever ? "All-time best set " + e.show(ever) : "All-time best set -";
+      const bestDay = S.bestDay(t); // t = this exercise's total for each day, so this is its biggest day
+      f.allDay.textContent = bestDay ? "All-time best day " + e.show(bestDay) : "All-time best day -";
       f.form.dataset.date = TODAY;
       setsList(f.sets, TODAY, "No sets yet today. Enter your first set above.", e);
     });
     syncDots();
+    renderGhost();
   }
 
   // month view: one calendar for every exercise. A day is active if any set was logged,
@@ -324,7 +453,21 @@
     $("legend-note").textContent = grid.best ? "Shaded by sets done. Your busiest day: " + plural(grid.best, "set") + "." : "Shading starts after your first set.";
   }
 
+  // Settings: the list of exercises. Adding happens on the ghost card on Home; removing is here, with Undo.
+  function renderExercises() {
+    $("ex-list").innerHTML = EXERCISES.map((e) => {
+      const custom = state.custom.some((c) => c.id === e.id);
+      return `<li class="row"><div class="row__text"><p class="row__title">${esc(e.name)}</p><p class="row__note">${e.kind === "time" ? "Timed" : "Counted in reps"}${custom ? "" : ", built in"}</p></div>`
+        + (custom ? `<button class="btn btn--secondary" type="button" data-remove="${e.id}" aria-label="Remove ${esc(e.name)}">Remove</button>` : "") + "</li>";
+    }).join("");
+    $("ex-hint").textContent = EXERCISES.length >= MAX_EXERCISES
+      ? "You have " + MAX_EXERCISES + " exercises, the most you can keep. Remove one to add another."
+      : "Add a new one from the last card on Home. An exercise's type is fixed once it is created, so remove it and add it again to change it.";
+  }
+  $("ex-list").addEventListener("click", (e) => { const b = e.target.closest("button[data-remove]"); if (b) removeExercise(b.dataset.remove); });
+
   function renderSettings() {
+    renderExercises();
     $("goal-value").textContent = state.goal;
     $("goal-dec").disabled = state.goal <= 1;
     $("goal-inc").disabled = state.goal >= 7;
@@ -334,7 +477,6 @@
 
   // day sheet: lists the day's sets for every exercise; the picker chooses which exercise a new set is for
   let openDate = null, dayEx = EXERCISES[0].id;
-  $("day-ex").innerHTML = EXERCISES.map((e) => `<button type="button" data-ex="${e.id}">${e.name}</button>`).join("");
   $("day-ex").addEventListener("click", (e) => {
     const b = e.target.closest("button[data-ex]");
     if (!b) return;
@@ -352,7 +494,7 @@
     $("entry-day").dataset.date = openDate;
     const box = $("sets-day");
     box.innerHTML = EXERCISES.some(has)
-      ? EXERCISES.filter(has).map((e) => `<h3 class="sheet__ex">${e.name}</h3><ul class="sets" data-ex="${e.id}"></ul>`).join("")
+      ? EXERCISES.filter(has).map((e) => `<h3 class="sheet__ex">${esc(e.name)}</h3><ul class="sets" data-ex="${e.id}"></ul>`).join("")
       : `<ul class="sets"><li class="sets__empty">No sets this day. Add one below.</li></ul>`;
     box.querySelectorAll("ul[data-ex]").forEach((ul) => setsList(ul, openDate, "", exById[ul.dataset.ex]));
   }
@@ -429,7 +571,11 @@
     beatYesterday(ex, () => state.sets.push(mk(form.dataset.date, wheel.get(), ex)));
     render();
   }
-  deck.addEventListener("submit", (e) => { e.preventDefault(); addSet(e.target, homeWheel[e.target.dataset.ex], e.target.dataset.ex); });
+  deck.addEventListener("submit", (e) => {
+    e.preventDefault();
+    if (e.target.id === "new-form") createExercise();
+    else addSet(e.target, homeWheel[e.target.dataset.ex], e.target.dataset.ex);
+  });
   $("entry-day").addEventListener("submit", (e) => { e.preventDefault(); addSet(e.target, dayWheel, dayEx); });
 
   // edit and delete
@@ -499,7 +645,7 @@
   // export: a real file download
   $("export").addEventListener("click", () => {
     state.lastExport = Date.now();
-    const data = { schemaVersion: 1, settings: { weeklyGoal: state.goal, lastExportAt: state.lastExport }, sets: state.sets };
+    const data = { schemaVersion: 1, settings: { weeklyGoal: state.goal, lastExportAt: state.lastExport, exercises: state.custom }, sets: state.sets };
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
     a.download = "workout-tracker-" + new Date().toISOString().slice(0, 10) + ".json";
@@ -518,11 +664,15 @@
     if (d.sets.length > 20000) return "The file has more than 20,000 sets.";
     const g = d.settings.weeklyGoal;
     if (!Number.isInteger(g) || g < 1 || g > 7) return "The weekly goal in the file is out of range.";
+    const defs = d.settings.exercises === undefined ? [] : d.settings.exercises; // files from before custom exercises have none
+    if (!Array.isArray(defs) || defs.length > MAX_EXERCISES - BUILTIN.length || !defs.every(validDef) || new Set(defs.map((x) => x.id)).size !== defs.length) return "The exercises in the file are not valid.";
+    d.settings.exercises = cleanDefs(defs);
+    const known = new Set([...BUILTIN, ...d.settings.exercises].map((x) => x.id));
     const ids = new Set();
     for (const s of d.sets) {
       if (typeof s.id !== "string" || ids.has(s.id)) return "A set id is missing or repeated.";
       ids.add(s.id);
-      if (!exById[s.exerciseId]) return "A set has an unknown exercise.";
+      if (!known.has(s.exerciseId)) return "A set has an unknown exercise.";
       if (!Number.isInteger(s.reps) || s.reps < 1 || s.reps > 9999) return "A set has a value outside 1 to 9999.";
       if (typeof s.date !== "string" || !/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(s.date) || S.toS(S.toN(s.date)) !== s.date || s.date > TODAY) return "A set has an invalid or future date.";
     }
@@ -536,15 +686,21 @@
       const d = validate(text);
       if (typeof d === "string") { $("err-import").textContent = d + " Nothing was changed."; return; }
       ask("Replace all current data with this file?", "Your current data is kept once, so you can restore it from Settings.", "Replace", () => {
-        state.backup = { goal: state.goal, sets: state.sets, lastExport: state.lastExport };
-        state.goal = d.settings.weeklyGoal; state.sets = d.sets; render();
+        hideSnack();
+        state.backup = { goal: state.goal, sets: state.sets, custom: state.custom, lastExport: state.lastExport };
+        state.goal = d.settings.weeklyGoal; state.sets = d.sets; state.custom = d.settings.exercises;
+        defineExercises();
+        render();
       });
     });
     e.target.value = "";
   });
   $("restore").addEventListener("click", () => ask("Restore previous data?", "This swaps your current data for the data from before the last import.", "Restore", () => {
-    const b = state.backup; state.backup = { goal: state.goal, sets: state.sets, lastExport: state.lastExport };
-    state.goal = b.goal; state.sets = b.sets; state.lastExport = b.lastExport; render();
+    hideSnack();
+    const b = state.backup; state.backup = { goal: state.goal, sets: state.sets, custom: state.custom, lastExport: state.lastExport };
+    state.goal = b.goal; state.sets = b.sets; state.lastExport = b.lastExport; state.custom = b.custom || [];
+    defineExercises();
+    render();
   }));
 
   // tabs, from the URL hash
@@ -562,8 +718,7 @@
   $("reload").addEventListener("click", () => { $("update").hidden = true; });
   // first paint waits for the saved data, so an empty state can never overwrite it
   load().then(() => {
-    // start each add wheel on the most recent set of that exercise, a likely repeat
-    EXERCISES.forEach((e) => homeWheel[e.id].set(recent(e)));
+    defineExercises(); // builds the cards from the saved exercises, each wheel on its last set
     render();
     route();
     // drop the old localStorage copy only once the snapshot is safely in IndexedDB
